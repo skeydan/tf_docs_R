@@ -537,6 +537,8 @@ install.packages("tfestimators")
 A `model` can be trained with the `tfestimators` API by
 converting the model to an `estimator` object with
 `keras_model_to_estimator`. 
+Note: As of today this only works with the TensorFlow implementation of Keras.
+
 
 ```{r}
 library(tfestimators)
@@ -547,3 +549,77 @@ Note: You can enable eager execution for debugging [estimator
 input functions](https://tensorflow.rstudio.com/tfestimators/articles/estimator_basics.html) and
 inspecting data.
 
+### Multiple GPUs
+
+You can run Keras models in parallel on multiple GPUs either using [Keras `multi_gpu_model()`](https://keras.rstudio.com/articles/faq.html#how-can-i-run-a-keras-model-on-multiple-gpus) or using `estimators`with `tf$contrib$distribute$DistributionStrategy`. 
+Please see the above link for Keras `multi_gpu_model`. 
+The `tfestimators`API provides distributed training on multiple GPUs with almost no changes to existing code.
+
+Currently, `tf$contrib$distribute$MirroredStrategy` is the only
+supported distribution strategy. `MirroredStrategy` does in-graph
+replication with synchronous training using all-reduce on a single
+machine. To use `DistributionStrategy` with Keras, convert the
+Keras model to an estimator with `keras_model_to_estimator`, then train the estimator.
+
+The following example distributes a model across multiple
+GPUs on a single machine.
+
+First, define a simple model.
+Note: As of today this only works with the TensorFlow implementation of Keras, so line 2 is required.
+
+```{r}
+library(keras)
+use_implementation("tensorflow")
+model <- keras_model_sequential()
+model %>% layer_dense(units = 16, activation = 'relu', input_shape = 10)
+model %>% layer_dense(units = 1, activation = 'sigmoid')
+
+model %>% compile(loss = 'binary_crossentropy', optimizer = 'adam')
+model %>% summary()
+```
+
+
+Define an *input pipeline*. The `input_fn` returns a `dataset`
+object used to distribute the data across multiple devices—with each
+device processing a slice of the input batch.
+
+```{r}
+library(tfdatasets)
+input_fn <- function() {
+  x <- matrix(rnorm(1024 * 10), nrow = 1024, ncol = 10)
+  y <- matrix(sample(0:1, 1024, replace = TRUE), nrow = 1024)
+  dataset <- tensor_slices_dataset(tuple(x, y)) %>%
+    dataset_repeat(10) %>%
+    dataset_batch(32)
+  dataset
+}
+```
+
+
+Next, create a `tf$estimator$RunConfig` and set the `train_distribute`
+argument to the `tf$contrib$distribute$MirroredStrategy` instance. When
+creating `MirroredStrategy`, you can specify a list of devices or set
+the `num_gpus` argument.
+
+```{r}
+strategy <- tf$contrib$distribute$MirroredStrategy(num_gpus = 4L)
+config <- tf$estimator$RunConfig(train_distribute = strategy)
+```
+
+Convert the Keras model to an `estimator` instance:
+
+```{r}
+library(tfestimators)
+estimator <- keras_model_to_estimator(
+  keras_model = model,
+  config = config,
+  model_dir = '/tmp/model_dir')
+```
+
+
+Finally, train the `Estimator` instance by providing the `input_fn` and
+`steps` arguments:
+
+```{r}
+estimator %>% train(input_fn = input_fn, steps = 10)
+```
