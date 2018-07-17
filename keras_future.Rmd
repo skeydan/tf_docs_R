@@ -49,11 +49,11 @@ model <- keras_model_sequential()
 
 model %>% 
   # Adds a densely-connected layer with 64 units to the model:
-  layer_dense(units = 64, activation = 'relu') %>%
+  layer_dense(units = 64, activation='relu') %>%
   # Add another:
-  layer_dense(units = 64, activation = 'relu') %>%
+  layer_dense(units = 64, activation='relu') %>%
   # Add a softmax layer with 10 output units:
-  layer_dense(units = 10, activation = 'softmax')
+  layer_dense(units = 10, activation='softmax')
 ```
 
 ### Configure the layers
@@ -74,7 +74,7 @@ constructor arguments:
 
 ```{r}
 # Create a sigmoid layer:
-layer_dense(units = 64, activation ='sigmoid')
+layer_dense(units = 64, activation='sigmoid')
 
 # A linear layer with L1 regularization of factor 0.01 applied to the kernel matrix:
 layer_dense(units = 64, kernel_regularizer = regularizer_l1(0.01))
@@ -130,7 +130,7 @@ model %>% compile(
   metrics = list("categorical_accuracy"))
 ```
 
-### Input data
+### Simple input data
 
 You can train keras models directly on R matrices and arrays (possibly created from R `data.frames`).
 A model is fit to the training data using the `fit` method:
@@ -180,6 +180,48 @@ model %>% fit(
   validation_data = list(val_data, val_labels))
 ```
 
+### tfdatasets input data
+
+Use the [datasets API](https://tensorflow.rstudio.com/tools/tfdatasets/articles/introduction.html) to scale to large datasets or multi-device training. To use `tfdatasets`, you need to install it separately:
+
+```{r}
+install.packages("tfdatasets")
+```
+
+
+Pass a `dataset` instance to the `fit` method:
+
+```{r} 
+library(tfdatasets)
+# Instantiates a toy dataset instance:
+dataset <- tensor_slices_dataset(list(data, labels)) %>% 
+           dataset_batch(32, drop_remainder = TRUE) %>%
+           dataset_repeat()
+
+# Don't forget to specify `steps_per_epoch` when calling `fit` on a dataset.
+model %>% fit(dataset, epochs = 10, steps_per_epoch = 30)
+```
+
+Here, the `fit` method uses the `steps_per_epoch` argument — this is the
+number of training steps the model runs before it moves to the next
+epoch. Since the `dataset` yields batches of data, this snippet does not
+require a `batch_size`.
+
+Datasets can also be used for validation:
+
+```{r}
+dataset <- tensor_slices_dataset(reticulate::tuple(data, labels)) %>% 
+           dataset_batch(32, drop_remainder = TRUE) %>%
+           dataset_repeat()
+
+val_dataset <- tensor_slices_dataset(reticulate::tuple(val_data, val_labels)) %>% 
+           dataset_batch(32, drop_remainder = TRUE) %>%
+           dataset_repeat()
+
+# Don't forget to specify `steps_per_epoch` when calling `fit` on a dataset.
+model %>% fit(dataset, epochs = 10, steps_per_epoch = 30, validation_data = val_dataset,
+          validation_steps = 3)
+```
 
 ### Evaluate and predict
 
@@ -189,7 +231,7 @@ use raw R data as well as a `dataset`.
 To *evaluate* the inference-mode loss and metrics for the data provided:
 
 ```{r}
-model %>% evaluate(test_data, test_labels, batch_size = 32)
+model %>% evaluate(test_data, test_labels, batch_size=32)
 
 model %>% evaluate(test_dataset, steps = 30)
 ```
@@ -230,7 +272,7 @@ The following example uses the functional API to build a simple,
 fully-connected network:
 
 ```{r}
-inputs <- layer_input(shape = (32))  # Returns a placeholder tensor
+inputs <- layer_input(shape=(32))  # Returns a placeholder tensor
 
 predictions <- inputs %>% 
   layer_dense(units = 64, activation = 'relu') %>%
@@ -241,17 +283,12 @@ predictions <- inputs %>%
 model <- keras_model(inputs = inputs, outputs = predictions)
 
 # The compile step specifies the training configuration.
-model %>% compile(
-  optimizer = optimizer_rmsprop(lr = 0.001),
-  loss = 'categorical_crossentropy',
-  metrics = list('accuracy'))
+model %>% compile(optimizer = optimizer_rmsprop(lr = 0.001),
+                  loss = 'categorical_crossentropy',
+                  metrics = list('accuracy'))
 
 # Trains for 5 epochs
-model %>% fit(
-  data,
-  labels,
-  batch_size = 32,
-  epochs = 5)
+model %>% fit(data, labels, batch_size = 32, epochs = 5)
 ```
 
 
@@ -361,17 +398,12 @@ my_model <- function(input_dim, output_dim, name = NULL) {
 
 model <- my_model(input_dim = 32, output_dim = 10)
 
-model %>% compile(
-  optimizer = optimizer_rmsprop(lr = 0.001),
-  loss = 'categorical_crossentropy',
-  metrics = list('accuracy'))
+model %>% compile(optimizer = optimizer_rmsprop(lr = 0.001),
+                  loss = 'categorical_crossentropy',
+                  metrics = list('accuracy'))
 
 # Trains for 5 epochs
-model %>% fit(
-  data,
-  labels,
-  batch_size = 32,
-  epochs = 5)
+model %>% fit(data, labels, batch_size = 32, epochs = 5)
 ```
 
 
@@ -400,13 +432,8 @@ callbacks <- list(
   callback_tensorboard(log_dir = './logs')
 )
 
-model %>% fit(
-  data,
-  labels,
-  batch_size = 32,
-  epochs = 5,
-  callbacks = callbacks,
-  validation_data = list(val_data, val_labels))
+model %>% fit(data, labels, batch_size = 32, epochs = 5, callbacks = callbacks,
+              validation_data = list(val_data, val_labels))
 ```
 
 
@@ -508,13 +535,91 @@ Note: As of today this only works with the TensorFlow implementation of Keras.
 
 
 ```{r}
-library(keras)
-use_implementation("tensorflow")
 library(tfestimators)
-
 estimator <- keras_model_to_estimator(model)
 ```
 
 Note: You can enable eager execution for debugging [estimator
-input functions](https://tensorflow.rstudio.com/tfestimators/articles/estimator_basics.html) and inspecting data.
+input functions](https://tensorflow.rstudio.com/tfestimators/articles/estimator_basics.html) and
+inspecting data.
 
+### Multiple GPUs
+
+You can run Keras models in parallel on multiple GPUs either using [Keras `multi_gpu_model()`](https://keras.rstudio.com/articles/faq.html#how-can-i-run-a-keras-model-on-multiple-gpus) or using `estimators`with `tf$contrib$distribute$DistributionStrategy`. 
+Please see the above link for Keras `multi_gpu_model`. 
+The `tfestimators`API provides distributed training on multiple GPUs with almost no changes to existing code.
+
+Currently, `tf$contrib$distribute$MirroredStrategy` is the only
+supported distribution strategy. `MirroredStrategy` does in-graph
+replication with synchronous training using all-reduce on a single
+machine. To use `DistributionStrategy` with Keras, convert the
+Keras model to an estimator with `keras_model_to_estimator`, then train the estimator.
+
+The following example distributes a model across multiple
+GPUs on a single machine.
+
+First, define a simple model.
+Note: As of today this only works with the TensorFlow implementation of Keras, so line 2 is required.
+
+```{r}
+library(keras)
+use_implementation("tensorflow")
+
+model <- keras_model_sequential()
+
+model %>% 
+  layer_dense(units = 16, activation = 'relu', input_shape = 10) %>%
+  layer_dense(units = 1, activation = 'sigmoid')
+
+model %>% compile(
+  loss = 'binary_crossentropy',
+  optimizer = 'adam')
+```
+
+
+Define an *input pipeline*. The `input_fn` returns a `dataset`
+object used to distribute the data across multiple devices—with each
+device processing a slice of the input batch.
+
+```{r}
+library(tfdatasets)
+
+input_fn <- function() {
+  x <- matrix(rnorm(1024 * 10), nrow = 1024, ncol = 10)
+  y <- matrix(sample(0:1, 1024, replace = TRUE), nrow = 1024)
+  dataset <- tensor_slices_dataset(tuple(x, y)) %>%
+    dataset_repeat(10) %>%
+    dataset_batch(32)
+  dataset
+}
+```
+
+
+Next, create a `tf$estimator$RunConfig` and set the `train_distribute`
+argument to the `tf$contrib$distribute$MirroredStrategy` instance. When
+creating `MirroredStrategy`, you can specify a list of devices or set
+the `num_gpus` argument.
+
+```{r}
+strategy <- tf$contrib$distribute$MirroredStrategy(num_gpus = 4L)
+config <- tf$estimator$RunConfig(train_distribute = strategy)
+```
+
+Convert the Keras model to an `estimator` instance:
+
+```{r}
+library(tfestimators)
+
+estimator <- keras_model_to_estimator(
+  keras_model = model,
+  config = config,
+  model_dir = '/tmp/model_dir')
+```
+
+
+Finally, train the `Estimator` instance by providing the `input_fn` and
+`steps` arguments:
+
+```{r}
+estimator %>% train(input_fn = input_fn, steps = 10)
+```
