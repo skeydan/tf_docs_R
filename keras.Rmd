@@ -48,10 +48,13 @@ perceptron):
 model <- keras_model_sequential()
 
 model %>% 
+  
   # Adds a densely-connected layer with 64 units to the model:
   layer_dense(units = 64, activation = 'relu') %>%
+  
   # Add another:
   layer_dense(units = 64, activation = 'relu') %>%
+  
   # Add a softmax layer with 10 output units:
   layer_dense(units = 10, activation = 'softmax')
 ```
@@ -100,7 +103,8 @@ calling the `compile` method:
 model %>% compile(
   optimizer = 'adam',
   loss = 'categorical_crossentropy',
-  metrics = list('accuracy'))
+  metrics = list('accuracy')
+)
 ```
 
 `compile` takes three important arguments:
@@ -121,13 +125,15 @@ The following shows a few examples of configuring a model for training:
 model %>% compile(
   optimizer = 'adam',
   loss = 'mse',           # mean squared error
-  metrics = list('mae'))  # mean absolute error
+  metrics = list('mae')   # mean absolute error
+)
 
 # Configure a model for categorical classification.
 model %>% compile(
   optimizer = optimizer_rmsprop(lr = 0.01),
   loss = "categorical_crossentropy",
-  metrics = list("categorical_accuracy"))
+  metrics = list("categorical_accuracy")
+)
 ```
 
 ### Input data
@@ -144,7 +150,8 @@ model %>% fit(
   data,
   labels,
   epochs = 10,
-  batch_size = 32)
+  batch_size = 32
+)
 ```
 
 `fit` takes three important arguments:
@@ -177,7 +184,8 @@ model %>% fit(
   labels,
   epochs = 10,
   batch_size = 32,
-  validation_data = list(val_data, val_labels))
+  validation_data = list(val_data, val_labels)
+)
 ```
 
 
@@ -244,14 +252,16 @@ model <- keras_model(inputs = inputs, outputs = predictions)
 model %>% compile(
   optimizer = optimizer_rmsprop(lr = 0.001),
   loss = 'categorical_crossentropy',
-  metrics = list('accuracy'))
+  metrics = list('accuracy')
+)
 
 # Trains for 5 epochs
 model %>% fit(
   data,
   labels,
   batch_size = 32,
-  epochs = 5)
+  epochs = 5
+)
 ```
 
 
@@ -364,14 +374,16 @@ model <- my_model(input_dim = 32, output_dim = 10)
 model %>% compile(
   optimizer = optimizer_rmsprop(lr = 0.001),
   loss = 'categorical_crossentropy',
-  metrics = list('accuracy'))
+  metrics = list('accuracy')
+)
 
 # Trains for 5 epochs
 model %>% fit(
   data,
   labels,
   batch_size = 32,
-  epochs = 5)
+  epochs = 5
+)
 ```
 
 
@@ -406,7 +418,8 @@ model %>% fit(
   batch_size = 32,
   epochs = 5,
   callbacks = callbacks,
-  validation_data = list(val_data, val_labels))
+  validation_data = list(val_data, val_labels)
+)
 ```
 
 
@@ -419,11 +432,11 @@ Save and load the weights of a model using `save_model_weights_hdf5` and `load_m
 
 ```{r}
 # save in HDF5 format
-model %>% save_model_weights_hdf5('./my_model.h5')
+model %>% save_model_weights_hdf5('my_model.h5')
 
 # Restore the model's state,
 # this requires a model with the same architecture.
-model %>% load_model_weights_hdf5('./my_model.h5')
+model %>% load_model_weights_hdf5('my_model.h5')
 ```
 
 
