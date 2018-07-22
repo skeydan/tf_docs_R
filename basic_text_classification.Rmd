@@ -263,7 +263,7 @@ results
 ```
 
 
-This fairly naive approach achieves an accuracy of about 87%. WIth more advanced approaches, the model should get closer to 95%.
+This fairly naive approach achieves an accuracy of about 87%. With more advanced approaches, the model should get closer to 95%.
 
 
 ### Create a graph of accuracy and loss over time
