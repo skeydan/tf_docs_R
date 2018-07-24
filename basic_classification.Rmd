@@ -242,7 +242,7 @@ which.max(predictions[1, ])
 Alternatively, we can also directly get the class prediction:
 
 ```{r}
-class_pred <- model %>% predict_classes(img)
+class_pred <- model %>% predict_classes(test_images)
 class_pred
 ```
 
