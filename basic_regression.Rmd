@@ -1,0 +1,34 @@
+---
+title: "Predict house prices: regression"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, cache = TRUE)
+```
+
+
+
+In a regression problem, we aim to predict the output of a continuous value, like a price or a probability. Contrast this with a classification problem, where we aim to predict a discrete label (for example, where a picture contains an apple or an orange).
+
+This notebook builds a model to predict the median price of homes in a Boston suburb during the mid-1970s. To do this, we'll provide the model with some data points about the suburb, such as the crime rate and the local property tax rate.
+
+
+```{r}
+library(keras)
+```
+
+
+### The Boston Housing Prices dataset
+
+[This dataset](https://www.cs.toronto.edu/~delve/data/boston/bostonDetail.html) is accessible directly from keras.
+
+```{r}
+boston_housing <- dataset_boston_housing()
+
+train_data <- boston_housing$train$x
+train_labels <- boston_housing$train$y
+test_data <- boston_housing$test$x
+test_labels <- boston_housing$test$y
+```
+

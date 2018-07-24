@@ -31,11 +31,8 @@ We will use 60,000 images to train the network and 10,000 images to evaluate how
 ```{r}
 fashion_mnist <- dataset_fashion_mnist()
 
-train_images <- fashion_mnist$train[[1]]
-train_labels <- fashion_mnist$train[[2]]
-
-test_images <- fashion_mnist$test[[1]]
-test_labels <- fashion_mnist$test[[2]]
+c(train_images, train_labels) %<-% fashion_mnist$train
+c(test_images, test_labels) %<-% fashion_mnist$test
 ```
 
 At this point we have four arrays: The train_images and train_labels arrays are the training set — the data the model uses to learn. The model is tested against the test set: the test_images, and test_labels arrays.
@@ -112,14 +109,6 @@ dim(test_labels)
 
 The data must be preprocessed before training the network. If you inspect the first image in the training set, you will see that the pixel values fall in the range of 0 to 255:
 
-```
-Note - googled for ways to produce something like the original plot but didn't really find anything.
-For example, this:
-https://tensorflow.rstudio.com/tfestimators/articles/examples/mnist.html
-does the plotting after dividing by 255, while it seems the narrative here is showing the original scale before division...
-Would this make for an alternative?
-```
-
 ```{r}
 library(ggplot2)
 first_image_pixels <- data.frame(pixel = as.vector(train_images[1, , ]))
@@ -147,10 +136,10 @@ Verify that the data is in the correct format and we're ready to build and train
 par(mfcol=c(5,5))
 par(mar=c(0, 0, 1.5, 0), xaxs='i', yaxs='i')
 for (i in 1:25) { 
-    img <- train_images[i, , ]
-    img <- t(apply(img, 2, rev)) 
-    image(1:28, 1:28, img, col = gray((0:255)/255), xaxt = 'n', yaxt = 'n',
-          main = paste(class_names[train_labels[i] + 1]))
+  img <- train_images[i, , ]
+  img <- t(apply(img, 2, rev)) 
+  image(1:28, 1:28, img, col = gray((0:255)/255), xaxt = 'n', yaxt = 'n',
+        main = paste(class_names[train_labels[i] + 1]))
 }
 ```
 
@@ -250,6 +239,14 @@ A prediction is an array of 10 numbers. These describe the "confidence" of the m
 which.max(predictions[1, ])
 ```
 
+Alternatively, we can also directly get the class prediction:
+
+```{r}
+class_pred <- model %>% predict_classes(img)
+class_pred
+```
+
+
 As the labels are 0-based, this actually means a predicted label of 9 (to be found in class_names[9]). So the model is most confident that this image is an ankle boot.
 And we can check the test label to see this is correct:
 
@@ -264,20 +261,20 @@ Let's plot several images with their predictions. Correct prediction labels are 
 par(mfcol=c(5,5))
 par(mar=c(0, 0, 1.5, 0), xaxs='i', yaxs='i')
 for (i in 1:25) { 
-    img <- test_images[i, , ]
-    img <- t(apply(img, 2, rev)) 
-    # subtract 1 as labels go from 0 to 9
-    predicted_label <- which.max(predictions[i, ]) - 1
-    true_label <- test_labels[i]
-    if (predicted_label == true_label) {
-      color <- '#008800' 
-    } else {
-      color <- '#bb0000'
-    }
-    image(1:28, 1:28, img, col = gray((0:255)/255), xaxt = 'n', yaxt = 'n',
-          main = paste0(class_names[predicted_label + 1], " (",
-                        class_names[true_label + 1], ")"),
-          col.main = color)
+  img <- test_images[i, , ]
+  img <- t(apply(img, 2, rev)) 
+  # subtract 1 as labels go from 0 to 9
+  predicted_label <- which.max(predictions[i, ]) - 1
+  true_label <- test_labels[i]
+  if (predicted_label == true_label) {
+    color <- '#008800' 
+  } else {
+    color <- '#bb0000'
+  }
+  image(1:28, 1:28, img, col = gray((0:255)/255), xaxt = 'n', yaxt = 'n',
+        main = paste0(class_names[predicted_label + 1], " (",
+                      class_names[true_label + 1], ")"),
+        col.main = color)
 }
 ```
 
@@ -305,5 +302,13 @@ predictions
 prediction <- predictions[1, ] - 1
 which.max(prediction)
 ```
+
+Or, directly getting the class prediction again:
+
+```{r}
+class_pred <- model %>% predict_classes(img)
+class_pred
+```
+
 
 And, as before, the model predicts a label of 9.

@@ -31,11 +31,8 @@ The following code downloads the IMDB dataset to your machine (or uses a cached 
 ```{r}
 imdb <- dataset_imdb(num_words = 10000)
 
-train_data <- imdb$train[[1]]
-train_labels <- imdb$train[[2]]
-
-test_data <- imdb$test[[1]]
-test_labels <- imdb$test[[2]]
+c(train_data, train_labels) %<-% imdb$train
+c(test_data, test_labels) %<-% imdb$test
 ```
 
 
@@ -77,9 +74,6 @@ length(train_data[[2]])
 It may be useful to know how to convert integers back to text.
 We already have the `word_index` we downloaded above — a list with words as keys and integers as values. If we create a data.frame from it, we can conveniently use it in both directions.
 
-```
-Is this ok? I was fiddling around creating a reversed list and running into string to integer  conversion problems and the like and then thought maybe this is easiest?
-```
 
 ```{r}
 word_index_df <- data.frame(
@@ -268,7 +262,7 @@ This fairly naive approach achieves an accuracy of about 87%. With more advanced
 
 ### Create a graph of accuracy and loss over time
 
-`model$fit` returns a `keras_training_history` object whose `metrics` slot contains loss and metrics values recorded during training.
+`fit` returns a `keras_training_history` object whose `metrics` slot contains loss and metrics values recorded during training.
 You can conveniently plot the loss and metrics curves like so:
 
 
