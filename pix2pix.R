@@ -18,21 +18,25 @@ data_dir <- "facades"
 
 buffer_size <- 400
 batch_size <- 1
+batches_per_epoch <- buffer_size / batch_size
 img_width <- 256L
 img_height <- 256L
+#img_width <- 64L
+#img_height <- 64L
 
 load_image <- function(image_file, is_train) {
+
   image <- tf$read_file(image_file)
   image <- tf$image$decode_jpeg(image)
   
-  w <- tf$shape(image)[1]
-  w2 <- (w / 2L) %>% tf$cast(tf$int32)
-  real_image <- image[, 1:w2, ]
+  w <- k_shape(image)[2] 
+  w2 <- (w / 2L) %>% k_cast(tf$int32)
+  real_image <- image[, 1L:w2, ]
   input_image <- image[, (w2 + 1L):w, ]
   
-  input_image <- tf$cast(input_image, tf$float32)
-  real_image <- tf$cast(real_image, tf$float32)
-  
+  input_image <- k_cast(input_image, tf$float32)
+  real_image <- k_cast(real_image, tf$float32)
+
   if (is_train) {
     # random jittering
     # resizing to 286 x 286 x 3
@@ -40,19 +44,23 @@ load_image <- function(image_file, is_train) {
     input_image <-
       tf$image$resize_images(input_image,
                              c(286L, 286L),
+                             #c(140L, 140L),
                              align_corners = TRUE,
                              method = 2)
     real_image <- tf$image$resize_images(real_image,
                                          c(286L, 286L),
+                                         #c(140L, 140L),
                                          align_corners = TRUE,
                                          method = 2)
     
     # randomly cropping to 256 x 256 x 3
+    # Stacks a list of rank R tensors into a rank R+1 tensor.
+    # dim 2 286 286   3
     stacked_image <-
-      tf$stack(list(input_image, real_image), axis = 0L)
+      k_stack(list(input_image, real_image), axis = 1)
     cropped_image <-
       tf$random_crop(stacked_image, size = c(2L, img_height, img_width, 3L))
-    c(input_image, real_image) %<-% list(cropped_image[1L, , , ], cropped_image[2L, , , ])
+    c(input_image, real_image) %<-% list(cropped_image[1, , , ], cropped_image[2, , , ])
     
     if (runif(1) > 0.5) {
       # random mirroring
@@ -123,6 +131,7 @@ downsample <- function(filters,
       if (self$apply_batchnorm) {
         x %>% self$batchnorm(training = training)
       }
+      cat("downsample (generator) output: ", x$shape$as_list(), "\n")
       x %>% layer_activation_leaky_relu()
     }
     
@@ -153,10 +162,12 @@ upsample <- function(filters,
       c(x1, x2) %<-% xs
       x <- self$up_conv(x1) %>% self$batchnorm(training = training)
       if (self$apply_dropout) {
-        x %>% self$dropout(x, training = training)
+        x %>% self$dropout(training = training)
       }
       x %>% layer_activation("relu")
-      k_concatenate(x, x2)
+      concat <- k_concatenate(list(x, x2))
+      cat("upsample (generator) output: ", concat$shape$as_list(), "\n")
+      concat
     }
   })
 }
@@ -203,7 +214,7 @@ generator <- function(name = "generator") {
       x6 <- self$down6(x5, training = training) # (bs, 4, 4, 512)
       x7 <- self$down7(x6, training = training) # (bs, 2, 2, 512)
       x8 <- self$down8(x7, training = training) # (bs, 1, 1, 512)
-      
+
       x9 <-
         self$up1(list(x8, x7), training = training) # (bs, 2, 2, 1024)
       x10 <-
@@ -219,7 +230,21 @@ generator <- function(name = "generator") {
       x15 <-
         self$up7(list(x14, x1), training = training) # (bs, 128, 128, 128)
       
-      self$last(x15) # (bs, 256, 256, 3)
+      # x10 <-
+      #   self$up2(list(x6, x5), training = training) # (bs, 4, 4, 1024)
+      # x11 <-
+      #   self$up3(list(x10, x4), training = training) # (bs, 8, 8, 1024)
+      # x12 <-
+      #    self$up4(list(x11, x3), training = training) # (bs, 16, 16, 1024)
+      # x13 <-
+      #    self$up5(list(x12, x2), training = training) # (bs, 32, 32, 512)
+      # x14 <-
+      #   self$up6(list(x13, x1), training = training) # (bs, 64, 64, 256)
+      # 
+      # x16 <- self$last(x14) # (bs, 256, 256, 3)
+      x16 <- self$last(x15) # (bs, 256, 256, 3)
+      cat("generator output: ", x16$shape$as_list(), "\n")
+      x16
     }
   })
 }
@@ -250,6 +275,8 @@ disc_downsample <- function(filters,
       if (self$apply_batchnorm) {
         x %>% self$batchnorm(training = training)
       }
+      cat("downsample (discriminator) output: ", x$shape$as_list(), "\n")
+      x
       x %>% layer_activation_leaky_relu()
     }
     
@@ -298,6 +325,7 @@ discriminator <- function(name = "discriminator") {
         # don't add a sigmoid activation here since
         # the loss function expects raw logits.
         self$last() # (bs, 30, 30, 1)
+      cat("discriminator output: ", x$shape$as_list(), "\n")
       x
     }
   })
@@ -355,35 +383,18 @@ generate_images <- function(generator, input, target, epoch) {
   par(mar = c(0.5, 0.5, 0.5, 0.5),
       xaxs = 'i',
       yaxs = 'i')
-  image(
-    1:28,
-    1:28,
-    input,
-    col = gray((0:255) / 255),
-    xaxt = 'n',
-    yaxt = 'n',
-    main = "input image"
-  )
-  image(
-    1:28,
-    1:28,
-    target,
-    col = gray((0:255) / 255),
-    xaxt = 'n',
-    yaxt = 'n',
-    main = "ground truth"
-  )
-  img <- predictions[i, , , 1]
-  img <- t(apply(img, 2, rev))
-  image(
-    1:28,
-    1:28,
-    img * 127.5 + 127.5,
-    col = gray((0:255) / 255),
-    xaxt = 'n',
-    yaxt = 'n',
-    main = "generated"
-  )
+  input <- input[1, , ,]$numpy() * 0.5 + 0.5
+  input[input > 1] <- 1
+  input[input < 0] <- 0
+  plot(as.raster(input, main = "input image"))
+  target <- target[1, , ,]$numpy() * 0.5 + 0.5
+  target[target > 1] <- 1
+  target[target < 0] <- 0
+  plot(as.raster(target, main = "ground truth"))
+  prediction <- prediction[1, , ,]$numpy() * 0.5 + 0.5
+  prediction[prediction > 1] <- 1
+  prediction[prediction < 0] <- 0
+  plot(as.raster(prediction, main = "generated"))
   dev.off()
 }
 
@@ -412,6 +423,7 @@ train <- function(dataset, num_epochs) {
             discriminator_loss(disc_real_output, disc_generated_output)
           total_loss_gen <- total_loss_gen + gen_loss
           total_loss_disc <- total_loss_disc + disc_loss
+          #cat("BL:", gen_loss$numpy(), disc_loss$numpy(), "\n")
         })
       })
       generator_gradients <- gen_tape$gradient(gen_loss,
@@ -421,11 +433,11 @@ train <- function(dataset, num_epochs) {
       
       generator_optimizer$apply_gradients(transpose(list(
         generator_gradients,
-        generator.variables
+        generator$variables
       )))
-      discriminator_optimizer.apply_gradients(transpose(
+      discriminator_optimizer$apply_gradients(transpose(
         list(discriminator_gradients,
-             discriminator.variables)
+             discriminator$variables)
       ))
       
     })
@@ -443,15 +455,16 @@ train <- function(dataset, num_epochs) {
       target <- batch[[2]]
       generate_images(generator, input, target, epoch)
     }
-    if (epoch %% 50 == 0) {
+    if (epoch %% 10 == 0) {
       checkpoint$save(file_prefix = checkpoint_prefix)
     }
     
   }
 }
 
+train(train_dataset, 200)
 # restore and test
-checkpoint$restore(tf$train$latest_checkpoint(checkpoint_dir))
+#checkpoint$restore(tf$train$latest_checkpoint(checkpoint_dir))
 test_iter <- make_iterator_one_shot(test_dataset)
 until_out_of_range({
   batch <- iterator_get_next(test_iter)

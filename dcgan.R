@@ -3,24 +3,23 @@ use_implementation("tensorflow")
 library(tensorflow)
 #tfe_enable_eager_execution(device_policy = "warn")
 tfe_enable_eager_execution(device_policy = "silent")
-tf$set_random_seed(7777)
+
 library(tfdatasets)
+tf$set_random_seed(7777)
 
 mnist <- dataset_mnist()
 c(train_images, train_labels) %<-% mnist$train
 
-train_images <- train_images %>% k_expand_dims()
-train_images$device
-train_images <- train_images %>% k_cast(dtype = "float32")
-train_images <- train_images$gpu() %>% k_cast(dtype = "float32")
+train_images <- train_images %>% 
+  k_expand_dims() %>%
+  k_cast(dtype = "float32")
 
 train_images <- (train_images - 127.5) / 127.5
 
 buffer_size <- 60000
 batch_size <- 256L
-batches_per_epoch <- buffer_size / batch_size %>% round()
+batches_per_epoch <- (buffer_size / batch_size) %>% round()
 
-train_images$device
 train_dataset <- tensor_slices_dataset(train_images) %>%
   dataset_shuffle(buffer_size) %>%
   dataset_batch(batch_size)
@@ -106,6 +105,7 @@ discriminator <-
         )
       self$leaky_relu2 <- layer_activation_leaky_relu()
       self$flatten <- layer_flatten()
+      # no sigmoid because using tf$losses$sigmoid_cross_entropy 
       self$fc1 <- layer_dense(units = 1)
       
       function(inputs,
@@ -126,15 +126,17 @@ discriminator <-
 generator <- generator()
 discriminator <- discriminator()
 
+# https://www.tensorflow.org/api_docs/python/tf/contrib/eager/defun
+# 
 generator$call = tf$contrib$eager$defun(generator$call)
 discriminator$call = tf$contrib$eager$defun(discriminator$call)
 
 discriminator_loss <- function(real_output, generated_output) {
   real_loss <-
-    tf$losses$sigmoid_cross_entropy(multi_class_labels = tf$ones_like(real_output),
+    tf$losses$sigmoid_cross_entropy(multi_class_labels = k_ones_like(real_output),
                                     logits = real_output)
   generated_loss <-
-    tf$losses$sigmoid_cross_entropy(multi_class_labels = tf$zeros_like(generated_output),
+    tf$losses$sigmoid_cross_entropy(multi_class_labels = k_zeros_like(generated_output),
                                     logits = generated_output)
   real_loss + generated_loss
 }
@@ -151,7 +153,7 @@ noise_dim <- 100L
 num_examples_to_generate <- 25L
 
 random_vector_for_generation <-
-  tf$random_normal(c(num_examples_to_generate,
+  k_random_normal(c(num_examples_to_generate,
                      noise_dim))
 
 generate_and_save_images <- function(model, epoch, test_input) {
@@ -185,16 +187,16 @@ train <- function(dataset, epochs, noise_dim) {
     
     until_out_of_range({
       batch <- iterator_get_next(iter)
-      noise <- tf$random_normal(c(batch_size, noise_dim))
+      noise <- k_random_normal(c(batch_size, noise_dim))
       with(tf$GradientTape() %as% gen_tape, {
       with(tf$GradientTape() %as% disc_tape, {
         generated_images <- generator(noise)
-        real_output <- discriminator(batch, training = TRUE)
-        generated_output <-
+        disc_real_output <- discriminator(batch, training = TRUE)
+        disc_generated_output <-
           discriminator(generated_images, training = TRUE)
-        gen_loss <- generator_loss(generated_output)
+        gen_loss <- generator_loss(disc_generated_output)
         disc_loss <-
-          discriminator_loss(real_output, generated_output)
+          discriminator_loss(disc_real_output, disc_generated_output)
       })
       })
       
@@ -216,8 +218,8 @@ train <- function(dataset, epochs, noise_dim) {
     })
     
     cat("Time for epoch ", epoch, ": ", Sys.time() - start, " sec", "\n")
-    cat("Generator loss: ", total_loss_gen$numpy() / batches_per_epoch, "\n")
-    cat("Discriminator loss: ", total_loss_disc$numpy() / batches_per_epoch, "\n\n")
+    cat("Generator loss: ", k_cast_to_floatx(total_loss_gen) / batches_per_epoch, "\n")
+    cat("Discriminator loss: ", k_cast_to_floatx(total_loss_disc) / batches_per_epoch, "\n\n")
     if (epoch %% 10 == 0)
       generate_and_save_images(generator,
                                epoch,
