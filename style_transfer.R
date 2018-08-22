@@ -1,36 +1,35 @@
-#wget -P /tmp/nst/ https://upload.wikimedia.org/wikipedia/commons/d/d7/Green_Sea_Turtle_grazing_seagrass.jpg
-#wget -P /tmp/nst/ https://upload.wikimedia.org/wikipedia/commons/0/0a/The_Great_Wave_off_Kanagawa.jpg
-#wget -P /tmp/nst/ https://upload.wikimedia.org/wikipedia/commons/b/b4/Vassily_Kandinsky%2C_1913_-_Composition_7.jpg
-#wget -P /tmp/nst/ https://upload.wikimedia.org/wikipedia/commons/0/00/Tuebingen_Neckarfront.jpg
-#wget -P /tmp/nst/ https://upload.wikimedia.org/wikipedia/commons/6/68/Pillars_of_creation_2014_HST_WFC3-UVIS_full-res_denoised.jpg
-#wget -P /tmp/nst/ https://upload.wikimedia.org/wikipedia/commons/thumb/e/ea/Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg/1024px-Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg
+
 
 library(keras)
 use_implementation("tensorflow")
 library(tensorflow)
-#tfe_enable_eager_execution(device_policy = "warn")
 tfe_enable_eager_execution(device_policy = "silent")
 
-library(tfdatasets)
 library(purrr)
 library(glue)
 
 tf$set_random_seed(7777)
 img_shape <- c(128, 128, 3)
-content_path <- "/tmp/nst/Green_Sea_Turtle_grazing_seagrass.jpg"
-style_path <- "/tmp/nst/The_Great_Wave_off_Kanagawa.jpg"
+content_path <- "isar.jpg"
+style_path <- "The_Great_Wave_off_Kanagawa.jpg"
+
+
+num_iterations <- 2000
+content_weight <- 100
+style_weight <- 0.8
+total_variation_weight <- 0.01
 
 content_image <-
   image_load(content_path, target_size = img_shape[1:2])
-# content_image %>% image_to_array() %>%
-#   `/`(., 255) %>%
-#   as.raster() %>%  plot()
+content_image %>% image_to_array() %>%
+  `/`(., 255) %>%
+  as.raster() %>%  plot()
 
 style_image <-
   image_load(style_path, target_size = img_shape[1:2])
-# style_image %>% image_to_array() %>%
-#   `/`(., 255) %>%
-#   as.raster() %>%  plot()
+style_image %>% image_to_array() %>%
+  `/`(., 255) %>%
+  as.raster() %>%  plot()
 
 
 load_and_process_image <- function(path) {
@@ -41,7 +40,7 @@ load_and_process_image <- function(path) {
 }
 
 deprocess_image <- function(x) {
-  x <- x[1, , , ]
+  x <- x[1, , ,]
   # Remove zero-center by mean pixel
   x[, , 1] <- x[, , 1] + 103.939
   x[, , 2] <- x[, , 2] + 116.779
@@ -67,10 +66,10 @@ get_model <- function() {
   vgg <- application_vgg19(include_top = FALSE, weights = "imagenet")
   vgg$trainable <- FALSE
   style_outputs <-
-    purrr::map(style_layers, function(layer)
+    map(style_layers, function(layer)
       vgg$get_layer(layer)$output)
   content_outputs <-
-    purrr::map(content_layers, function(layer)
+    map(content_layers, function(layer)
       vgg$get_layer(layer)$output)
   model_outputs <- c(style_outputs, content_outputs)
   keras_model(vgg$input, model_outputs)
@@ -88,13 +87,14 @@ gram_matrix <- function(x) {
 
 style_loss <- function(gram_target, combination) {
   gram_comb <- gram_matrix(combination)
-  k_sum(k_square(gram_target - gram_comb)) / (4 * (img_shape[3]^2) * (img_shape[1] * img_shape[2])^2)
+  k_sum(k_square(gram_target - gram_comb)) / (4 * (img_shape[3] ^ 2) * (img_shape[1] * img_shape[2]) ^
+                                                2)
 }
 
-total_variation_loss <- function(x) {
-  y_ij  <- x[, 1:(img_nrows - 1L), 1:(img_ncols - 1L),]
-  y_i1j <- x[, 2:(img_nrows), 1:(img_ncols - 1L),]
-  y_ij1 <- x[, 1:(img_nrows - 1L), 2:(img_ncols),]
+total_variation_loss <- function(image) {
+  y_ij  <- image[1:(img_shape[1] - 1L), 1:(img_shape[2] - 1L),]
+  y_i1j <- image[2:(img_shape[1]), 1:(img_shape[2] - 1L),]
+  y_ij1 <- image[1:(img_shape[1] - 1L), 2:(img_shape[2]),]
   a <- k_square(y_ij - y_i1j)
   b <- k_square(y_ij - y_ij1)
   k_sum(k_pow(a + b, 1.25))
@@ -102,21 +102,26 @@ total_variation_loss <- function(x) {
 
 get_feature_representations <-
   function(model, content_path, style_path) {
-    style_image <- load_and_process_image(style_path) %>%
-      k_cast_to_floatx()
-    content_image <- load_and_process_image(content_path) %>%
-      k_cast_to_floatx()
+    # dim == (1, 128, 128, 3)
+    style_image <-
+      load_and_process_image(style_path) %>% k_cast("float32")
+    # dim == (1, 128, 128, 3)
+    content_image <-
+      load_and_process_image(content_path) %>% k_cast("float32")
+    # dim == (2, 128, 128, 3)
     stack_images <-
       k_concatenate(list(style_image, content_image), axis = 1)
-    
+    # length(model_outputs) == 6
+    # dim(model_outputs[[1]]) = (2, 128, 128, 64)
+    # dim(model_outputs[[6]]) = (2, 8, 8, 512)
     model_outputs <- model(stack_images)
     style_features <- model_outputs[1:num_style_layers] %>%
       map(function(batch)
-        batch[1, , ,])
+        batch[1, , , ])
     content_features <-
       model_outputs[(num_style_layers + 1):(num_style_layers + num_content_layers)] %>%
       map(function(batch)
-        batch[2, , ,])
+        batch[2, , , ])
     list(style_features, content_features)
   }
 
@@ -128,22 +133,23 @@ compute_loss <-
            content_features) {
     c(style_weight, content_weight) %<-% loss_weights
     model_outputs <- model(init_image)
-    # dim(style_output_features[[1]]) == 1 512 512  64
     style_output_features <- model_outputs[1:num_style_layers]
-    # dim(content_output_features[[1]]) == 1  32  32 512
     content_output_features <-
       model_outputs[(num_style_layers + 1):(num_style_layers + num_content_layers)]
     
     weight_per_style_layer <- 1 / num_style_layers
     style_score <- 0
+    # str(style_zip, max.level = 1)
+    # dim(style_zip[[5]][[1]]) == (512, 512)
     style_zip <-
       transpose(list(gram_style_features, style_output_features))
     for (l in 1:length(style_zip)) {
-      # dim(target_style) == 64 64
-      # dim(comb_style) == 1 512 512  64
+      # for l == 1:
+      # dim(target_style) == (64, 64)
+      # dim(comb_style) == (1, 128, 128, 64)
       c(target_style, comb_style) %<-% style_zip[[l]]
       style_score <-
-        style_score + weight_per_style_layer * style_loss(target_style, comb_style[1, , ,])
+        style_score + weight_per_style_layer * style_loss(target_style, comb_style[1, , , ])
     }
     
     weight_per_content_layer <- 1 / num_content_layers
@@ -151,18 +157,20 @@ compute_loss <-
     content_zip <-
       transpose(list(content_features, content_output_features))
     for (l in 1:length(content_zip)) {
-      # dim(comb_content) ==  1 32  32 512
-      # dim(target_content) == 32  32 512
+      # dim(comb_content) ==  (1, 8, 8, 512)
+      # dim(target_content) == (8, 8, 512)
       c(target_content, comb_content) %<-% content_zip[[l]]
       content_score <-
-        content_score + weight_per_content_layer * content_loss(comb_content[1, , ,], target_content)
+        content_score + weight_per_content_layer * content_loss(comb_content[1, , , ], target_content)
     }
     
+    variation_loss <- total_variation_loss(init_image[1, , ,])
     style_score <- style_score * style_weight
     content_score <- content_score * content_weight
+    variation_score <- variation_loss * total_variation_weight
     
-    loss <- style_score + content_score
-    list(loss, style_score, content_score)
+    loss <- style_score + content_score + variation_score
+    list(loss, style_score, content_score, variation_score)
   }
 
 compute_grads <-
@@ -184,18 +192,14 @@ compute_grads <-
   }
 
 run_style_transfer <- function(content_path,
-                               style_path,
-                               num_iterations = 2000,
-                               content_weight = 1e2,
-                               style_weight = 1e-2) {
+                               style_path) {
   model <- get_model()
   walk(model$layers, function(layer)
     layer$trainable = FALSE)
   
-  # dim(style_features[[1]]) == 512 512  64
-  # dim(content_features[[1]]) == 32  32 512
   c(style_features, content_features) %<-% get_feature_representations(model, content_path, style_path)
-  # dim(gram_style_features[[1]]) == 64 64
+  # dim(gram_style_features[[1]]) == (64, 64)
+  # we compute this once, in advance
   gram_style_features <-
     map(style_features, function(feature)
       gram_matrix(feature))
@@ -220,12 +224,19 @@ run_style_transfer <- function(content_path,
   max_vals <- 255 - norm_means
   
   for (i in seq_len(num_iterations)) {
+    # dim(grads) == (1, 128, 128, 3)
     c(grads, all_losses) %<-% compute_grads(model,
                                             loss_weights,
                                             init_image,
                                             gram_style_features,
                                             content_features)
-    c(loss, style_score, content_score) %<-% all_losses
+    c(loss, style_score, content_score, variation_score) %<-% all_losses
+    #readr::write_csv(data.frame(grads[1, , , 1]$numpy() %>% round(2)),
+    #                 paste0("grads_", i, "_1.csv"))
+    #readr::write_csv(data.frame(grads[1, , , 2]$numpy() %>% round(2)),
+    #                 paste0("grads_", i, "_2.csv"))
+    #readr::write_csv(data.frame(grads[1, , , 3]$numpy() %>% round(2)),
+    #                 paste0("grads_", i, "_3.csv"))
     # grads, _ = tf.clip_by_global_norm(grads, 5.0)
     optimizer$apply_gradients(list(tuple(grads, init_image)))
     clipped <- tf$clip_by_value(init_image, min_vals, max_vals)
@@ -241,7 +252,9 @@ run_style_transfer <- function(content_path,
     if (i %% 50 == 0) {
       glue("Iteration: {i}") %>% print()
       glue(
-        "Total loss: {loss$numpy()}, style loss: {style_score$numpy()}, content loss: {content_score$numpy()}, time: {Sys.time() - start_time} seconds"
+        "Total loss: {k_cast_to_floatx(loss)}, style loss: {k_cast_to_floatx(style_score)},
+        content loss: {k_cast_to_floatx(content_score)}, total variation loss: {k_cast_to_floatx(variation_score)},
+        time for 1 iteration: {(Sys.time() - start_time) %>% round(2)}"
       ) %>% print()
       
       if (i %% 100 == 0) {
@@ -258,5 +271,4 @@ run_style_transfer <- function(content_path,
   list(best_image, best_loss)
 }
 
-c(best_image, best_loss) %<-% run_style_transfer(content_path,
-                                                 style_path)
+c(best_image, best_loss) %<-% run_style_transfer(content_path, style_path)

@@ -127,7 +127,7 @@ generator <- generator()
 discriminator <- discriminator()
 
 # https://www.tensorflow.org/api_docs/python/tf/contrib/eager/defun
-# 
+# for me: 56 vs 42 seconds per epoch
 generator$call = tf$contrib$eager$defun(generator$call)
 discriminator$call = tf$contrib$eager$defun(discriminator$call)
 
@@ -217,9 +217,9 @@ train <- function(dataset, epochs, noise_dim) {
       
     })
     
-    cat("Time for epoch ", epoch, ": ", Sys.time() - start, " sec", "\n")
-    cat("Generator loss: ", k_cast_to_floatx(total_loss_gen) / batches_per_epoch, "\n")
-    cat("Discriminator loss: ", k_cast_to_floatx(total_loss_disc) / batches_per_epoch, "\n\n")
+    cat("Time for epoch ", epoch, ": ", Sys.time() - start, "\n")
+    cat("Generator loss: ", total_loss_gen$numpy() / batches_per_epoch, "\n")
+    cat("Discriminator loss: ", total_loss_disc$numpy() / batches_per_epoch, "\n\n")
     if (epoch %% 10 == 0)
       generate_and_save_images(generator,
                                epoch,
