@@ -17,7 +17,7 @@ train_images <- train_images %>%
 train_images <- (train_images - 127.5) / 127.5
 
 buffer_size <- 60000
-batch_size <- 256L
+batch_size <- 256
 batches_per_epoch <- (buffer_size / batch_size) %>% round()
 
 train_dataset <- tensor_slices_dataset(train_images) %>%
@@ -149,7 +149,7 @@ discriminator_optimizer <- tf$train$AdamOptimizer(1e-4)
 generator_optimizer <- tf$train$AdamOptimizer(1e-4)
 
 num_epochs <- 150
-noise_dim <- 100L
+noise_dim <- 100
 num_examples_to_generate <- 25L
 
 random_vector_for_generation <-

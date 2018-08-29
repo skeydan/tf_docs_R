@@ -22,11 +22,12 @@ maybecat <- function(context, x) {
     cat(context, ": shape of ", name, ": ", dims, "\n", sep = "")
   }
 }
+
 debugshapes <- FALSE
+restore_checkpoint <- TRUE
+saved_features_exist <- TRUE
 
-save_features <- FALSE
-
-tf$set_random_seed(7777)
+use_session_with_seed(7777, disable_gpu = FALSE, disable_parallel_cpu = FALSE)
 
 annotation_file <- "train2014/annotations/captions_train2014.json"
 image_path <- "train2014/train2014"
@@ -50,23 +51,28 @@ for (i in seq_len(num_captions)) {
   all_captions[[i]] <- caption
 }
 
-set.seed(7777)
-#num_examples <- 3000
+#num_examples <- 20
 num_examples <- 30000
 
-if (save_features) {
+if (!saved_features_exist) {
   random_sample <- sample(1:num_captions, size = num_examples)
   train_indices <-
     sample(random_sample, size = length(random_sample) * 0.8)
   validation_indices <-
     setdiff(random_sample, train_indices)
-  saveRDS(random_sample, paste0("random_sample_", num_examples, ".rds"))
-  saveRDS(train_indices, paste0("train_indices_", num_examples, ".rds"))
-  saveRDS(validation_indices, paste0("validation_indices_", num_examples, ".rds"))
+  saveRDS(random_sample,
+          paste0("random_sample_", num_examples, ".rds"))
+  saveRDS(train_indices,
+          paste0("train_indices_", num_examples, ".rds"))
+  saveRDS(validation_indices,
+          paste0("validation_indices_", num_examples, ".rds"))
 } else {
-  random_sample <- readRDS(paste0("random_sample_", num_examples, ".rds"))
-  train_indices <- readRDS(paste0("train_indices_", num_examples, ".rds"))
-  validation_indices <- readRDS(paste0("validation_indices_", num_examples, ".rds"))
+  random_sample <-
+    readRDS(paste0("random_sample_", num_examples, ".rds"))
+  train_indices <-
+    readRDS(paste0("train_indices_", num_examples, ".rds"))
+  validation_indices <-
+    readRDS(paste0("validation_indices_", num_examples, ".rds"))
 }
 
 sample_captions <- all_captions[random_sample]
@@ -89,7 +95,7 @@ load_image <- function(image_path) {
 image_model <- application_inception_v3(include_top = FALSE,
                                         weights = "imagenet")
 
-if (save_features) {
+if (!saved_features_exist) {
   preencode <- unique(sample_images) %>% unlist() %>% sort()
   num_unique <- length(preencode)
   
@@ -112,10 +118,13 @@ if (save_features) {
     #shape=(bs, 8, 8, 2048)
     batch_features <- image_model(img)
     batch_features <- tf$reshape(batch_features,
-                                 list(dim(batch_features)[1], -1L, dim(batch_features)[4]))
+                                 list(dim(batch_features)[1],-1L, dim(batch_features)[4]))
     for (i in 1:dim(batch_features)[1]) {
-      np$save(path[i]$numpy()$decode("utf-8"),
-              batch_features[i, , ]$numpy())
+      #p <- path[i]$numpy()$decode("utf-8")
+      p <- path[i]$numpy() %>% py_str() %>% str_sub(3, -2)
+      np$save(p,
+              batch_features[i, ,]$numpy())
+      
     }
     
   })
@@ -159,20 +168,26 @@ decode_caption <- function(text) {
 }
 
 
-caption_lengths <- map(all_captions[1:num_examples], function(c) str_split(c," ")[[1]] %>% length()) %>% unlist()
+caption_lengths <-
+  map(all_captions[1:num_examples], function(c)
+    str_split(c, " ")[[1]] %>% length()) %>% unlist()
 fivenum(caption_lengths)
 max_length <- fivenum(caption_lengths)[5]
 
 train_captions_padded <-
-  pad_sequences(train_captions_tokenized,
-                maxlen = max_length,
-                padding = "post",
-                truncating = "post")
+  pad_sequences(
+    train_captions_tokenized,
+    maxlen = max_length,
+    padding = "post",
+    truncating = "post"
+  )
 validation_captions_padded <-
-  pad_sequences(validation_captions_tokenized,
-                maxlen = max_length,
-                padding = "post",
-                truncating = "post")
+  pad_sequences(
+    validation_captions_tokenized,
+    maxlen = max_length,
+    padding = "post",
+    truncating = "post"
+  )
 
 length(train_images)
 dim(train_captions_padded)
@@ -187,17 +202,19 @@ vocab_size <- top_k
 features_shape <- 2048
 attention_features_shape <- 64
 
-train_images_4checking <- train_images[7:12]
-train_captions_4checking <- train_captions_padded[7:12, ]
-validation_images_4checking <- validation_images[7:12]
-validation_captions_4checking <- validation_captions_padded[7:12, ]
+train_images_4checking <- train_images[1:3]
+train_captions_4checking <- train_captions_padded[1:3,]
+validation_images_4checking <- validation_images[1:3]
+validation_captions_4checking <- validation_captions_padded[1:3,]
 
 #######################################################################
 #######################################################################
 
 map_func <- function(img_name, cap) {
   # decode is needed when we call this via datasets
-  img_tensor <- np$load(paste0(img_name$decode("utf-8"), ".npy"))
+  p <- img_name %>% py_str() %>% str_sub(3, -2) %>% paste0(".npy")
+  #p <- paste0(img_name$decode("utf-8"), ".npy")
+  img_tensor <- np$load(p)
   img_tensor <- tf$cast(img_tensor, tf$float32)
   list(img_tensor, cap)
 }
@@ -381,7 +398,7 @@ cx_loss <- function(y_true, y_pred) {
 }
 
 get_caption <-
-  function(image) {
+  function(image, prediction_mode) {
     attention_matrix <-
       matrix(0, nrow = max_length, ncol = attention_features_shape)
     # shape=(1, 299, 299, 3)
@@ -390,7 +407,7 @@ get_caption <-
     img_tensor_val <- image_model(temp_input)
     # shape=(1, 64, 2048)
     img_tensor_val <- k_reshape(img_tensor_val,
-                                list(dim(img_tensor_val)[1], -1, dim(img_tensor_val)[4]))
+                                list(dim(img_tensor_val)[1],-1, dim(img_tensor_val)[4]))
     # shape=(1, 64, 256)
     features <- encoder(img_tensor_val)
     
@@ -406,23 +423,25 @@ get_caption <-
       # shape=(1, 64, 1)
       # shape=(64,)
       attention_weights <- k_reshape(attention_weights, c(-1))
-      attention_matrix[t,] <- attention_weights %>% as.double()
+      attention_matrix[t, ] <- attention_weights %>% as.double()
       
       # tf$multinomial results are 0-based
       # but word_index_df starts at 0
       # so if we have 5000 units we have values from 0-4999
       # logits: 2-D Tensor with shape [batch_size, num_classes]. Each slice [i, :] represents the unnormalized log-probabilities for all classes.
       # pred_idx <-
-        #tf$multinomial(k_exp(preds), num_samples = 1)[1, 1] %>% as.double() + 1
-      pred_idx <-
-        tf$multinomial(preds, num_samples = 1)[1, 1] %>% as.double() 
+      #tf$multinomial(k_exp(preds), num_samples = 1)[1, 1] %>% as.double() + 1
+      ##### tbd add switch in multinomial ####
+      pred_idx <- 
+        tf$multinomial(preds, num_samples = 1)[1, 1] %>% as.double()
       pred_word <-
         word_index_df[word_index_df$index == pred_idx, "word"]
       
       if (pred_word == "<end>") {
         result <-
           paste0(result, pred_word)
-        attention_matrix <- attention_matrix[1:length(str_split(result, " ")[[1]]), , drop = FALSE]
+        attention_matrix <-
+          attention_matrix[1:length(str_split(result, " ")[[1]]), , drop = FALSE]
         return (list(result, attention_matrix))
       } else {
         result <-
@@ -444,7 +463,7 @@ plot_attention <-
     result <- str_split(result, " ")[[1]] %>% as.list()
     # attention_matrix shape: nrow = max_length, ncol = attention_features_shape
     for (i in 1:length(result)) {
-      att <- attention_matrix[i,] %>% np$resize(tuple(8L, 8L))
+      att <- attention_matrix[i, ] %>% np$resize(tuple(8L, 8L))
       dim(att) <- c(8, 8, 1)
       att <- image_read(att) %>% image_scale("299x299") %>%
         image_annotate(
@@ -454,14 +473,15 @@ plot_attention <-
           color = "white",
           location = "+20+40"
         )
-      overlay <- image_composite(att, image, operator = "blend", compose_args = "50") 
+      overlay <-
+        image_composite(att, image, operator = "blend", compose_args = "50")
       image_write(
         overlay,
         paste0(
           "attention_plot_epoch_",
           epoch,
           "_img_",
-          image_name %>% basename() %>% str_sub(16, -5),
+          image_name %>% basename() %>% str_sub(16,-5),
           "_word_",
           i,
           ".png"
@@ -471,7 +491,7 @@ plot_attention <-
   }
 
 
-check_sample_captions <- function(epoch, mode) {
+check_sample_captions <- function(epoch, mode, prediction_mode = "raw") {
   images <- switch(mode,
                    training = train_images_4checking,
                    validation = validation_images_4checking)
@@ -480,12 +500,12 @@ check_sample_captions <- function(epoch, mode) {
                      validation = validation_captions_4checking)
   cat("\n", "Sample checks on ", mode, " set:", "\n", sep = "")
   for (i in 1:length(images)) {
-    c(result, attention_matrix) %<-% get_caption(images[[i]])
+    c(result, attention_matrix) %<-% get_caption(images[[i]], prediction_mode = prediction_mode)
     real_caption <-
-      decode_caption(captions[i, ]) %>% str_remove_all(" <pad>")
+      decode_caption(captions[i,]) %>% str_remove_all(" <pad>")
     cat("\nReal caption:",  real_caption, "\n")
     cat("\nPredicted caption:", result, "\n")
-    plot_attention(attention_matrix, images[[i]], result, epoch)
+    #plot_attention(attention_matrix, images[[i]], result, epoch)
   }
   
 }
@@ -497,66 +517,82 @@ checkpoint <-
                       encoder = encoder,
                       decoder = decoder)
 
+
+if (restore_checkpoint) {
+  checkpoint$restore(tf$train$latest_checkpoint(checkpoint_dir))
+}
+
 num_epochs <- 20
 
-for (epoch in seq_len(num_epochs)) {
-#for (epoch in 21:60) {
-  
-  cat("Starting epoch:", epoch, "\n")
-  total_loss <- 0
-  progress <- 0
-  train_iter <- make_iterator_one_shot(train_dataset)
-  
-  until_out_of_range({
+if (!restore_checkpoint) {
+  for (epoch in seq_len(num_epochs)) {
+    #for (epoch in 21:60) {
     
-    progress <- progress + 1
-    if(progress %% 10 == 0) cat("-")
+    cat("Starting epoch:", epoch, "\n")
+    total_loss <- 0
+    progress <- 0
+    train_iter <- make_iterator_one_shot(train_dataset)
     
-    batch <- iterator_get_next(train_iter)
-    loss <- 0
-    # bs 64 2048
-    img_tensor <- batch[[1]]
-    target_caption <- batch[[2]]
-    
-    # initializing the hidden state for each batch
-    # because the captions are not related from image to image
-    decoder_init_hidden <- k_zeros(c(batch_size, gru_units))
-    
-    dec_input <-
-      k_expand_dims(rep(list(word_index_df[word_index_df$word == "<start>", "index"]), batch_size))
-    
-    with(tf$GradientTape() %as% tape, {
-      features <- encoder(img_tensor)
+    until_out_of_range({
+      progress <- progress + 1
+      if (progress %% 10 == 0)
+        cat("-")
       
-      for (t in seq_len(dim(target_caption)[2] - 1)) {
-        c(preds, dec_hidden, weights) %<-%
-          decoder(list(dec_input, features, decoder_init_hidden))
-        loss <- loss + cx_loss(target_caption[ , t], preds)
-        # teacher forcing
-        dec_input <- k_expand_dims(target_caption[ , t])
-      }
+      batch <- iterator_get_next(train_iter)
+      loss <- 0
+      # bs 64 2048
+      img_tensor <- batch[[1]]
+      target_caption <- batch[[2]]
       
+      # initializing the hidden state for each batch
+      # because the captions are not related from image to image
+      decoder_init_hidden <- k_zeros(c(batch_size, gru_units))
+      
+      dec_input <-
+        k_expand_dims(rep(list(word_index_df[word_index_df$word == "<start>", "index"]), batch_size))
+      
+      with(tf$GradientTape() %as% tape, {
+        features <- encoder(img_tensor)
+        
+        for (t in seq_len(dim(target_caption)[2] - 1)) {
+          c(preds, dec_hidden, weights) %<-%
+            decoder(list(dec_input, features, decoder_init_hidden))
+          loss <- loss + cx_loss(target_caption[, t], preds)
+          # teacher forcing
+          dec_input <- k_expand_dims(target_caption[, t])
+        }
+        
+      })
+      total_loss <-
+        total_loss + loss / k_cast_to_floatx(dim(target_caption)[2])
+      
+      variables <- c(encoder$variables, decoder$variables)
+      gradients <- tape$gradient(loss, variables)
+      
+      optimizer$apply_gradients(purrr::transpose(list(gradients, variables)),
+                                global_step = tf$train$get_or_create_global_step())
     })
-    total_loss <-
-      total_loss + loss / k_cast_to_floatx(dim(target_caption)[2])
+    cat(paste0(
+      "\n\nTotal loss (epoch): ",
+      epoch,
+      ": ",
+      (total_loss / k_cast_to_floatx(buffer_size)) %>% as.double() %>% round(4),
+      "\n"
+    ))
     
-    variables <- c(encoder$variables, decoder$variables)
-    gradients <- tape$gradient(loss, variables)
     
-    optimizer$apply_gradients(purrr::transpose(list(gradients, variables)),
-                              global_step = tf$train$get_or_create_global_step())
-  })
-  cat(paste0(
-    "\n\nTotal loss (epoch): ",
-    epoch,
-    ": ",
-    (total_loss / k_cast_to_floatx(buffer_size)) %>% as.double() %>% round(4),
-    "\n"
-  ))
-  
-  
-  checkpoint$save(file_prefix = checkpoint_prefix)
-  check_sample_captions(epoch, "training")
-  check_sample_captions(epoch, "validation")
-  
+    checkpoint$save(file_prefix = checkpoint_prefix)
+    check_sample_captions(epoch, "training")
+    check_sample_captions(epoch, "validation")
+    
+  }
 }
+
+
+epoch <- num_epochs
+
+check_sample_captions(epoch, "training", prediction_mode = "exp")
+check_sample_captions(epoch, "training", prediction_mode = "raw")
+check_sample_captions(epoch, "training", prediction_mode = "max")
+
+check_sample_captions(epoch, "validation")
