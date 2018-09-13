@@ -5,7 +5,6 @@ tfe_enable_eager_execution(device_policy = "silent")
 
 np <- import("numpy")
 
-library(reticulate)
 library(tfdatasets)
 library(purrr)
 library(stringr)
@@ -24,10 +23,12 @@ maybecat <- function(context, x) {
 }
 
 debugshapes <- FALSE
-restore_checkpoint <- TRUE
+restore_checkpoint <- FALSE
 saved_features_exist <- TRUE
 
-use_session_with_seed(7777, disable_gpu = FALSE, disable_parallel_cpu = FALSE)
+use_session_with_seed(7777,
+                      disable_gpu = FALSE,
+                      disable_parallel_cpu = FALSE)
 
 annotation_file <- "train2014/annotations/captions_train2014.json"
 image_path <- "train2014/train2014"
@@ -51,7 +52,6 @@ for (i in seq_len(num_captions)) {
   all_captions[[i]] <- caption
 }
 
-#num_examples <- 20
 num_examples <- 30000
 
 if (!saved_features_exist) {
@@ -118,12 +118,12 @@ if (!saved_features_exist) {
     #shape=(bs, 8, 8, 2048)
     batch_features <- image_model(img)
     batch_features <- tf$reshape(batch_features,
-                                 list(dim(batch_features)[1],-1L, dim(batch_features)[4]))
+                                 list(dim(batch_features)[1], -1L, dim(batch_features)[4]))
     for (i in 1:dim(batch_features)[1]) {
       #p <- path[i]$numpy()$decode("utf-8")
-      p <- path[i]$numpy() %>% py_str() %>% str_sub(3, -2)
+      p <- path[i]$numpy() %>% py_str() %>% str_sub(3,-2)
       np$save(p,
-              batch_features[i, ,]$numpy())
+              batch_features[i, , ]$numpy())
       
     }
     
@@ -131,7 +131,6 @@ if (!saved_features_exist) {
 }
 
 top_k <- 5000
-#top_k <- 500
 tokenizer <- text_tokenizer(num_words = top_k,
                             oov_token = "<unk>",
                             filters = '!"#$%&()*+.,-/:;=?@[\\]^_`{|}~ ')
@@ -197,23 +196,18 @@ buffer_size <- num_examples
 embedding_dim <- 256
 gru_units <- 512
 vocab_size <- top_k
-# shape of the vector extracted from InceptionV3 is (64, 2048)
-# these two variables represent that
 features_shape <- 2048
 attention_features_shape <- 64
 
-train_images_4checking <- train_images[1:3]
-train_captions_4checking <- train_captions_padded[1:3,]
-validation_images_4checking <- validation_images[1:3]
-validation_captions_4checking <- validation_captions_padded[1:3,]
+train_images_4checking <- train_images[c(4, 10, 30)]
+train_captions_4checking <- train_captions_padded[c(4, 10, 30), ]
+validation_images_4checking <- validation_images[c(7, 10, 12)]
+validation_captions_4checking <-
+  validation_captions_padded[c(7, 10, 12), ]
 
-#######################################################################
-#######################################################################
 
 map_func <- function(img_name, cap) {
-  # decode is needed when we call this via datasets
-  p <- img_name %>% py_str() %>% str_sub(3, -2) %>% paste0(".npy")
-  #p <- paste0(img_name$decode("utf-8"), ".npy")
+  p <- paste0(img_name$decode("utf-8"), ".npy")
   img_tensor <- np$load(p)
   img_tensor <- tf$cast(img_tensor, tf$float32)
   list(img_tensor, cap)
@@ -239,9 +233,6 @@ train_dataset <-
   dataset_batch(batch_size) #%>%
 # dataset_prefetch(1)
 
-
-#######################################################################
-#######################################################################
 
 cnn_encoder <-
   function(embedding_dim,
@@ -398,7 +389,7 @@ cx_loss <- function(y_true, y_pred) {
 }
 
 get_caption <-
-  function(image, prediction_mode) {
+  function(image) {
     attention_matrix <-
       matrix(0, nrow = max_length, ncol = attention_features_shape)
     # shape=(1, 299, 299, 3)
@@ -407,11 +398,11 @@ get_caption <-
     img_tensor_val <- image_model(temp_input)
     # shape=(1, 64, 2048)
     img_tensor_val <- k_reshape(img_tensor_val,
-                                list(dim(img_tensor_val)[1],-1, dim(img_tensor_val)[4]))
+                                list(dim(img_tensor_val)[1], -1, dim(img_tensor_val)[4]))
     # shape=(1, 64, 256)
     features <- encoder(img_tensor_val)
     
-    hidden <- k_zeros(c(1, gru_units))
+    dec_hidden <- k_zeros(c(1, gru_units))
     dec_input <-
       k_expand_dims(list(word_index_df[word_index_df$word == "<start>", "index"]))
     
@@ -419,30 +410,28 @@ get_caption <-
     
     for (t in seq_len(max_length - 1)) {
       c(preds, dec_hidden, attention_weights) %<-%
-        decoder(list(dec_input, features, hidden))
+        decoder(list(dec_input, features, dec_hidden))
       # shape=(1, 64, 1)
       # shape=(64,)
       attention_weights <- k_reshape(attention_weights, c(-1))
-      attention_matrix[t, ] <- attention_weights %>% as.double()
+      attention_matrix[t,] <- attention_weights %>% as.double()
       
       # tf$multinomial results are 0-based
       # but word_index_df starts at 0
       # so if we have 5000 units we have values from 0-4999
       # logits: 2-D Tensor with shape [batch_size, num_classes]. Each slice [i, :] represents the unnormalized log-probabilities for all classes.
-      # pred_idx <-
-      #tf$multinomial(k_exp(preds), num_samples = 1)[1, 1] %>% as.double() + 1
-      ##### tbd add switch in multinomial ####
-      pred_idx <- 
-        tf$multinomial(preds, num_samples = 1)[1, 1] %>% as.double()
+ 
+      pred_idx = tf$multinomial(exp(preds), num_samples = 1)[1, 1] %>% as.double()
+      
       pred_word <-
         word_index_df[word_index_df$index == pred_idx, "word"]
       
       if (pred_word == "<end>") {
         result <-
-          paste0(result, pred_word)
+          paste(result, pred_word)
         attention_matrix <-
           attention_matrix[1:length(str_split(result, " ")[[1]]), , drop = FALSE]
-        return (list(result, attention_matrix))
+        return (list(str_trim(result), attention_matrix))
       } else {
         result <-
           paste(result, pred_word)
@@ -463,7 +452,7 @@ plot_attention <-
     result <- str_split(result, " ")[[1]] %>% as.list()
     # attention_matrix shape: nrow = max_length, ncol = attention_features_shape
     for (i in 1:length(result)) {
-      att <- attention_matrix[i, ] %>% np$resize(tuple(8L, 8L))
+      att <- attention_matrix[i,] %>% np$resize(tuple(8L, 8L))
       dim(att) <- c(8, 8, 1)
       att <- image_read(att) %>% image_scale("299x299") %>%
         image_annotate(
@@ -474,14 +463,14 @@ plot_attention <-
           location = "+20+40"
         )
       overlay <-
-        image_composite(att, image, operator = "blend", compose_args = "50")
+        image_composite(att, image, operator = "blend", compose_args = "30")
       image_write(
         overlay,
         paste0(
           "attention_plot_epoch_",
           epoch,
           "_img_",
-          image_name %>% basename() %>% str_sub(16,-5),
+          image_name %>% basename() %>% str_sub(16, -5),
           "_word_",
           i,
           ".png"
@@ -491,24 +480,25 @@ plot_attention <-
   }
 
 
-check_sample_captions <- function(epoch, mode, prediction_mode = "raw") {
-  images <- switch(mode,
-                   training = train_images_4checking,
-                   validation = validation_images_4checking)
-  captions <- switch(mode,
-                     training = train_captions_4checking,
-                     validation = validation_captions_4checking)
-  cat("\n", "Sample checks on ", mode, " set:", "\n", sep = "")
-  for (i in 1:length(images)) {
-    c(result, attention_matrix) %<-% get_caption(images[[i]], prediction_mode = prediction_mode)
-    real_caption <-
-      decode_caption(captions[i,]) %>% str_remove_all(" <pad>")
-    cat("\nReal caption:",  real_caption, "\n")
-    cat("\nPredicted caption:", result, "\n")
-    #plot_attention(attention_matrix, images[[i]], result, epoch)
+check_sample_captions <-
+  function(epoch, mode, plot_attention) {
+    images <- switch(mode,
+                     training = train_images_4checking,
+                     validation = validation_images_4checking)
+    captions <- switch(mode,
+                       training = train_captions_4checking,
+                       validation = validation_captions_4checking)
+    cat("\n", "Sample checks on ", mode, " set:", "\n", sep = "")
+    for (i in 1:length(images)) {
+      c(result, attention_matrix) %<-% get_caption(images[[i]])
+      real_caption <-
+        decode_caption(captions[i, ]) %>% str_remove_all(" <pad>")
+      cat("\nReal caption:",  real_caption, "\n")
+      cat("\nPredicted caption:", result, "\n")
+      if (plot_attention) plot_attention(attention_matrix, images[[i]], result, epoch)
+    }
+    
   }
-  
-}
 
 checkpoint_dir <- "./checkpoints_captions"
 checkpoint_prefix <- file.path(checkpoint_dir, "ckpt")
@@ -522,11 +512,10 @@ if (restore_checkpoint) {
   checkpoint$restore(tf$train$latest_checkpoint(checkpoint_dir))
 }
 
-num_epochs <- 20
+num_epochs <- 5
 
 if (!restore_checkpoint) {
   for (epoch in seq_len(num_epochs)) {
-    #for (epoch in 21:60) {
     
     cat("Starting epoch:", epoch, "\n")
     total_loss <- 0
@@ -544,9 +533,7 @@ if (!restore_checkpoint) {
       img_tensor <- batch[[1]]
       target_caption <- batch[[2]]
       
-      # initializing the hidden state for each batch
-      # because the captions are not related from image to image
-      decoder_init_hidden <- k_zeros(c(batch_size, gru_units))
+      dec_hidden <- k_zeros(c(batch_size, gru_units))
       
       dec_input <-
         k_expand_dims(rep(list(word_index_df[word_index_df$word == "<start>", "index"]), batch_size))
@@ -556,9 +543,8 @@ if (!restore_checkpoint) {
         
         for (t in seq_len(dim(target_caption)[2] - 1)) {
           c(preds, dec_hidden, weights) %<-%
-            decoder(list(dec_input, features, decoder_init_hidden))
+            decoder(list(dec_input, features, dec_hidden))
           loss <- loss + cx_loss(target_caption[, t], preds)
-          # teacher forcing
           dec_input <- k_expand_dims(target_caption[, t])
         }
         
@@ -582,17 +568,16 @@ if (!restore_checkpoint) {
     
     
     checkpoint$save(file_prefix = checkpoint_prefix)
-    check_sample_captions(epoch, "training")
-    check_sample_captions(epoch, "validation")
+    
+    check_sample_captions(epoch, "training", plot_attention = FALSE)
+    check_sample_captions(epoch, "validation", plot_attention = FALSE)
     
   }
 }
 
 
 epoch <- num_epochs
+check_sample_captions(epoch, "training", plot_attention = TRUE)
+check_sample_captions(epoch, "validation", plot_attention = TRUE)
 
-check_sample_captions(epoch, "training", prediction_mode = "exp")
-check_sample_captions(epoch, "training", prediction_mode = "raw")
-check_sample_captions(epoch, "training", prediction_mode = "max")
 
-check_sample_captions(epoch, "validation")
