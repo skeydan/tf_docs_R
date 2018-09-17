@@ -1,18 +1,16 @@
+reticulate::use_condaenv("tf-10-cpu")
 library(keras)
 use_implementation("tensorflow")
+
 library(tensorflow)
 
 tfe_enable_eager_execution(device_policy = "silent")
 
-np <- import("numpy")
-
-library(reticulate)
 library(tfdatasets)
 library(purrr)
-library(stringr)
-library(glue)
 
-tf$set_random_seed(7777)
+use_session_with_seed(7777, disable_gpu = FALSE, disable_parallel_cpu = FALSE)
+restore <- TRUE
 
 data_dir <- "facades"
 
@@ -21,39 +19,32 @@ batch_size <- 1
 batches_per_epoch <- buffer_size / batch_size
 img_width <- 256L
 img_height <- 256L
-#img_width <- 64L
-#img_height <- 64L
 
 load_image <- function(image_file, is_train) {
 
   image <- tf$read_file(image_file)
   image <- tf$image$decode_jpeg(image)
   
-  w <- k_shape(image)[2] 
-  w2 <- (w / 2L) %>% k_cast(tf$int32)
-  real_image <- image[, 1L:w2, ]
-  input_image <- image[, (w2 + 1L):w, ]
+  w <- as.integer(k_shape(image)[2])
+  w2 <- as.integer(w / 2L)
+  real_image <- image[ , 1L:w2, ]
+  input_image <- image[ , (w2 + 1L):w, ]
   
   input_image <- k_cast(input_image, tf$float32)
   real_image <- k_cast(real_image, tf$float32)
 
   if (is_train) {
-    # random jittering
-    # resizing to 286 x 286 x 3
     # method = 2 indicates using "ResizeMethod.NEAREST_NEIGHBOR"
     input_image <-
       tf$image$resize_images(input_image,
                              c(286L, 286L),
-                             #c(140L, 140L),
                              align_corners = TRUE,
                              method = 2)
     real_image <- tf$image$resize_images(real_image,
                                          c(286L, 286L),
-                                         #c(140L, 140L),
                                          align_corners = TRUE,
                                          method = 2)
     
-    # randomly cropping to 256 x 256 x 3
     # Stacks a list of rank R tensors into a rank R+1 tensor.
     # dim 2 286 286   3
     stacked_image <-
@@ -63,7 +54,6 @@ load_image <- function(image_file, is_train) {
     c(input_image, real_image) %<-% list(cropped_image[1, , , ], cropped_image[2, , , ])
     
     if (runif(1) > 0.5) {
-      # random mirroring
       input_image <- tf$image$flip_left_right(input_image)
       real_image <- tf$image$flip_left_right(real_image)
     }
@@ -84,7 +74,6 @@ load_image <- function(image_file, is_train) {
       )
   }
   
-  # normalizing the images to [-1, 1]
   input_image <- (input_image / 127.5) - 1
   real_image <- (real_image / 127.5) - 1
   
@@ -94,17 +83,16 @@ load_image <- function(image_file, is_train) {
 train_dataset <-
   tf$data$Dataset$list_files(file.path(data_dir, "train/*.jpg")) %>%
   dataset_shuffle(buffer_size) %>%
-  dataset_map(function(x)
-    load_image(x, TRUE)) %>%
-  dataset_batch(1)
+  dataset_map(function(image)
+    tf$py_func(load_image, list(image, TRUE), list(tf$float32, tf$float32))) %>%
+  dataset_batch(batch_size)
 
 test_dataset <-
   tf$data$Dataset$list_files(file.path(data_dir, "test/*.jpg")) %>%
-  dataset_map(function(x)
-    load_image(x, FALSE)) %>%
-  dataset_batch(1)
+  dataset_map(function(image)
+    tf$py_func(load_image, list(image, TRUE), list(tf$float32, tf$float32))) %>%
+  dataset_batch(batch_size)
 
-output_channels <- 3
 
 downsample <- function(filters,
                        size,
@@ -191,7 +179,7 @@ generator <- function(name = "generator") {
     self$up6 <- upsample(128, 4)
     self$up7 <- upsample(64, 4)
     self$last <- layer_conv_2d_transpose(
-      filters = output_channels,
+      filters = 3,
       kernel_size = 4,
       strides = 2,
       padding = "same",
@@ -199,8 +187,6 @@ generator <- function(name = "generator") {
       activation = "tanh"
     )
     
-    # tbd check out
-    # @tf.contrib.eager.defun
     function(x,
              mask = NULL,
              training = TRUE) {
@@ -229,19 +215,6 @@ generator <- function(name = "generator") {
         self$up6(list(x13, x2), training = training) # (bs, 64, 64, 256)
       x15 <-
         self$up7(list(x14, x1), training = training) # (bs, 128, 128, 128)
-      
-      # x10 <-
-      #   self$up2(list(x6, x5), training = training) # (bs, 4, 4, 1024)
-      # x11 <-
-      #   self$up3(list(x10, x4), training = training) # (bs, 8, 8, 1024)
-      # x12 <-
-      #    self$up4(list(x11, x3), training = training) # (bs, 16, 16, 1024)
-      # x13 <-
-      #    self$up5(list(x12, x2), training = training) # (bs, 32, 32, 512)
-      # x14 <-
-      #   self$up6(list(x13, x1), training = training) # (bs, 64, 64, 256)
-      # 
-      # x16 <- self$last(x14) # (bs, 256, 256, 3)
       x16 <- self$last(x15) # (bs, 256, 256, 3)
       cat("generator output: ", x16$shape$as_list(), "\n")
       x16
@@ -275,8 +248,6 @@ disc_downsample <- function(filters,
       if (self$apply_batchnorm) {
         x %>% self$batchnorm(training = training)
       }
-      cat("downsample (discriminator) output: ", x$shape$as_list(), "\n")
-      x
       x %>% layer_activation_leaky_relu()
     }
     
@@ -307,8 +278,6 @@ discriminator <- function(name = "discriminator") {
       kernel_initializer = initializer_random_normal()
     )
     
-    # tbd
-    # @tf.contrib.eager.defun
     function(x,
              y,
              mask = NULL,
@@ -357,8 +326,8 @@ generator_loss <-
     gan_loss + (lambda * l1_loss)
   }
 
-discriminator_optimizer <- tf$train$AdamOptimizer(1e-4, beta1 = 0.5)
-generator_optimizer <- tf$train$AdamOptimizer(1e-4, beta1 = 0.5)
+discriminator_optimizer <- tf$train$AdamOptimizer(2e-4, beta1 = 0.5)
+generator_optimizer <- tf$train$AdamOptimizer(2e-4, beta1 = 0.5)
 
 checkpoint_dir <- "./checkpoints_pix2pix"
 checkpoint_prefix <- file.path(checkpoint_dir, "ckpt")
@@ -370,17 +339,11 @@ checkpoint <-
     discriminator = discriminator
   )
 
-generate_images <- function(generator, input, target, epoch) {
-  # the training=True is intentional here since
-  # we want the batch statistics while running the model
-  # on the test dataset. If we use training=False, we will get
-  # the accumulated statistics learned from the training dataset
-  # (which we don't want)
+generate_images <- function(generator, input, target, id) {
   prediction <- generator(input, training = TRUE)
-  
-  png(paste0("pix2pix_epoch_", epoch, ".png"))
-  par(mfcol = c(2, 2))
-  par(mar = c(0.5, 0.5, 0.5, 0.5),
+  png(paste0("pix2pix_", id, ".png"), width = 900, height = 300)
+  par(mfcol = c(1, 3))
+  par(mar = c(0, 0, 0, 0),
       xaxs = 'i',
       yaxs = 'i')
   input <- input[1, , ,]$numpy() * 0.5 + 0.5
@@ -400,7 +363,6 @@ generate_images <- function(generator, input, target, epoch) {
 
 train <- function(dataset, num_epochs) {
   for (epoch in 1:num_epochs) {
-    start <- Sys.time()
     total_loss_gen <- 0
     total_loss_disc <- 0
     iter <- make_iterator_one_shot(train_dataset)
@@ -423,7 +385,6 @@ train <- function(dataset, num_epochs) {
             discriminator_loss(disc_real_output, disc_generated_output)
           total_loss_gen <- total_loss_gen + gen_loss
           total_loss_disc <- total_loss_disc + disc_loss
-          #cat("BL:", gen_loss$numpy(), disc_loss$numpy(), "\n")
         })
       })
       generator_gradients <- gen_tape$gradient(gen_loss,
@@ -441,7 +402,7 @@ train <- function(dataset, num_epochs) {
       ))
       
     })
-    cat("Time for epoch ", epoch, ": ", Sys.time() - start, " sec", "\n")
+    cat("Epoch ", epoch, "\n")
     cat("Generator loss: ",
         total_loss_gen$numpy() / batches_per_epoch,
         "\n")
@@ -453,7 +414,7 @@ train <- function(dataset, num_epochs) {
       batch <- iterator_get_next(test_iter)
       input <- batch[[1]]
       target <- batch[[2]]
-      generate_images(generator, input, target, epoch)
+      generate_images(generator, input, target, paste0("epoch_", i))
     }
     if (epoch %% 10 == 0) {
       checkpoint$save(file_prefix = checkpoint_prefix)
@@ -462,13 +423,22 @@ train <- function(dataset, num_epochs) {
   }
 }
 
-train(train_dataset, 200)
-# restore and test
-#checkpoint$restore(tf$train$latest_checkpoint(checkpoint_dir))
+if (!restore) {
+  train(train_dataset, 200)
+} 
+
+
+checkpoint$restore(tf$train$latest_checkpoint(checkpoint_dir))
+
 test_iter <- make_iterator_one_shot(test_dataset)
+i <- 1
 until_out_of_range({
   batch <- iterator_get_next(test_iter)
   input <- batch[[1]]
   target <- batch[[2]]
-  generate_images(generator, input, target, "test")
+  generate_images(generator, input, target, paste0("test_", i))
+  i <- i + 1
 })
+
+
+
